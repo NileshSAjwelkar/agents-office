@@ -90,11 +90,11 @@ export function makeDeskScreenTexture(chip) {
   const c = document.createElement('canvas');
   c.width = 256; c.height = 160;
   const x = c.getContext('2d');
-  const draw = (lines) => {
+  const draw = (lines, status = '● working') => { // status: '○ idle' on a desk with nothing assigned (connected office)
     // live cream screen (v1 rule: wood desks with live cream/mint screens)
     x.fillStyle = '#FDFFF8'; x.fillRect(0, 0, 256, 160);
     x.fillStyle = chip; x.fillRect(0, 0, 256, 26);
-    x.fillStyle = '#151414'; x.font = 'bold 15px Menlo, monospace'; x.fillText('● working', 10, 18);
+    x.fillStyle = '#151414'; x.font = 'bold 15px Menlo, monospace'; x.fillText(status, 10, 18);
     x.font = '13px Menlo, monospace';
     lines.forEach((l, i) => {
       x.fillStyle = i === lines.length - 1 ? '#1E9070' : 'rgba(21,20,20,.78)';
@@ -203,6 +203,10 @@ export function poseWork(g, mode, t, dt) {
       tg.shLx = -1.05 + Math.sin(t / 170) * 0.12;
       tg.shRx = -1.05 + Math.sin(t / 140 + 1.3) * 0.14;
       tg.headRx = 0.07 + Math.sin(t / 380) * 0.05;
+      break;
+    case 'idle': // nothing assigned: seated, hands off the keyboard, a slow breath — no typing, no fidgeting
+      tg.shLx = -0.5; tg.shLz = -0.2; tg.shRx = -0.5; tg.shRz = 0.2;
+      tg.headRx = 0.05 + Math.sin(t / 900) * 0.02;
       break;
     case 'read': // leans back off the keyboard, arms drop to the sides, head tilts at the screen
       tg.shLx = -0.3; tg.shLz = -0.35; tg.shRx = -0.3; tg.shRz = 0.35;
