@@ -514,6 +514,22 @@ else {
       return j.error;
     });
     await step('server: rejects an empty task', async () => { const r = await fetch(base + '/api/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"dept":"sales","text":""}' }); if (r.status !== 400) throw new Error('status ' + r.status); });
+    await step('server: local only — foreign Host, Origin and non-JSON bodies are refused', async () => {
+      const http = await import('node:http'), net = await import('node:net'), os = await import('node:os');
+      const call = (method, p, headers, body) => new Promise((resolve, reject) => { const q = http.request({ host: '127.0.0.1', port, method, path: p, headers }, r => { r.resume(); resolve(r.statusCode); }); q.on('error', reject); q.end(body); });
+      const J = { 'content-type': 'application/json' }, want = async (label, got, ok) => { if (got !== ok) throw new Error(`${label}: got ${got}, wanted ${ok}`); };
+      await want('foreign Origin', await call('POST', '/api/tasks', { ...J, origin: 'http://evil.example' }, '{"dept":"sales","text":"x"}'), 403);
+      await want('null Origin (a file:// page)', await call('POST', '/api/tasks', { ...J, origin: 'null' }, '{"dept":"sales","text":"x"}'), 403);
+      await want('foreign Host (DNS rebinding)', await call('GET', '/api/health', { host: 'evil.example' }), 403);
+      await want('text/plain body (no preflight)', await call('POST', '/api/tasks', { 'content-type': 'text/plain' }, '{"dept":"sales","text":"x"}'), 415);
+      await want('own-origin JSON still works', await call('POST', '/api/tasks', { ...J, origin: `http://localhost:${port}` }, '{"dept":"sales","text":""}'), 400);
+      await want('body-less POST still works', await call('POST', '/api/tasks/none/run', {}), 404);
+      const lan = Object.values(os.networkInterfaces()).flat().find(i => i && i.family === 'IPv4' && !i.internal);
+      if (!lan) return 'no LAN interface to probe';
+      const open = await new Promise(r => { const c = net.connect({ host: lan.address, port, timeout: 1500 }, () => { c.destroy(); r(true); }); c.on('error', () => r(false)); c.on('timeout', () => { c.destroy(); r(false); }); });
+      if (open) throw new Error(`listening on ${lan.address}, not just 127.0.0.1`);
+      return `LAN address ${lan.address} refuses connections`;
+    });
     if (LIVE) {
       await step('live: Claude routes a task', async () => {
         const r = await fetch(base + '/api/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dept: 'emails', text: 'reply to a client asking when their September report will arrive' }) });

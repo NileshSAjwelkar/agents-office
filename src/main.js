@@ -220,7 +220,7 @@ for (const a of AGENTS) {
   const live = hasScreens() ? makeScreen(a.id, a.name) : null;
   const { group: desk, screenSet } = makeDesk(dept.chip, live);
   station.add(desk);
-  screenSets.push({ screenSet, dept: a.dept, live });
+  screenSets.push({ screenSet, id: a.id, dept: a.dept, live });
   const chair = makeChair();
   chair.position.set(0, 0, 1.75);
   station.add(chair);
@@ -521,7 +521,7 @@ addEventListener('keydown', (e) => {
   }
   else if (e.key === 'v' || e.key === 'V') setCam(!document.body.classList.contains('cam'));
   else if (e.key === 'd' || e.key === 'D') setDark(!darkOn);
-  else if (e.key === 'w' || e.key === 'W') requestApproval('apay'); // demo cue: Accounts Payable asks for approval
+  else if ((e.key === 'w' || e.key === 'W') && !liveOffice()) requestApproval('apay'); // demo cue: Accounts Payable asks for approval (a connected office's approvals are real)
 });
 
 // camera mode: mid-tone backdrop for filming the screen (#cam=1 / V toggles)
@@ -626,7 +626,7 @@ function renderChat(id) {
         ${m.mock ? `<div class="a-mock">${m.mock}</div>` : ''}
         ${m.pending
           ? '<div class="a-btns"><button class="a-yes">APPROVE</button><button class="a-no">REJECT</button></div>'
-          : `<div class="a-done">${m.approved ? '✓ Approved' : '✗ Rejected'} by AJ</div>`}
+          : `<div class="a-done">${m.approved ? '✓ Approved' : '✗ Rejected'} by you</div>`}
       </div>`;
     return '';
   }).join('');
@@ -1061,6 +1061,7 @@ for (let i = 0; i < 170; i++) fireAgentEvent(Date.now() - ri(2, 200) * 60000);
 for (const r of Object.values(R)) r.feed.sort((a, b) => b.ts - a.ts);
 
 /* ---------- minimal sim: work bobs, screen updates, brain meetings ---------- */
+const liveOffice = () => !!(tasks && tasks.isLive()); // served by serve.mjs: only real work is shown — the ambient theatre below runs in demo mode only
 let meeting = null; // Brain meetings fire ONLY on the X hotkey (AJ's call — demo cue, not ambient)
 let nextApprovalAt = performance.now() + 20000;
 let nextMetricAt = performance.now() + 3000;
@@ -1181,6 +1182,7 @@ function tickSim(now, dt) {
       let mode;
       if (r.cheerUntil && now < r.cheerUntil) mode = 'cheer';
       else if (r.slumpUntil && now < r.slumpUntil) mode = 'slump';
+      else if (liveOffice() && !tasks.doingTitle(r.a.id)) mode = 'idle'; // connected office: no task on this desk, so no typing
       else {
         if (!r.modeUntil) { // first pick: desync everyone so the room never moves in lockstep
           pickWorkMode(r, now);
@@ -1238,7 +1240,7 @@ function tickSim(now, dt) {
   }
   // ambient emoji work-bubbles pop over random desks every beat or two
   if (now > nextEmoteAt) {
-    const ids = Object.keys(R).filter(id => R[id].state === 'working');
+    const ids = liveOffice() ? [] : Object.keys(R).filter(id => R[id].state === 'working');
     if (ids.length) spawnEmote(R[ids[Math.floor(Math.random() * ids.length)]],
       rnd(['💬', '✉️', '📈', '💡', '✓', '📞', '🔍', '📎']));
     nextEmoteAt = now + 1200 + Math.random() * 1800;
@@ -1258,7 +1260,7 @@ function tickSim(now, dt) {
   }
   // agent events drive everything — feed, chat streams, billboard metrics (nothing is static)
   if (now > nextMetricAt) {
-    fireAgentEvent();
+    if (!liveOffice()) fireAgentEvent(); // demo only: a connected office's feed, stats and tool pulses come from real tasks
     nextMetricAt = now + 2600 + Math.random() * 3800;
   }
   // live screens: every monitor plays its own session; slower cadence when the camera is far away
@@ -1267,6 +1269,15 @@ function tickSim(now, dt) {
     for (const ss of screenSets) if (ss.live) ss.live.tick(now, slow);
   }
   // rotate desk screen content — a couple of screens refresh every beat so the room reads busy
+  else if (liveOffice()) { // connected office: a monitor shows the task on its desk, or sits idle
+    for (const ss of screenSets) {
+      const title = tasks.doingTitle(ss.id);
+      if (ss.shown === title) continue;
+      ss.shown = title;
+      ss.screenSet.draw(title ? (title.match(/.{1,26}(\s|$)/g) || [title]).slice(0, 3).map(l => '▸ ' + l.trim()) : ['▸ …'], title ? '● working' : '○ idle');
+      ss.screenSet.tex.needsUpdate = true;
+    }
+  }
   else if (Math.floor(now / 1800) !== Math.floor((now - dt * 1000) / 1800)) {
     const n = 1 + (Math.random() < 0.5 ? 1 : 0);
     for (let i = 0; i < n; i++) {
@@ -1370,7 +1381,8 @@ function applyRoster(agents) {
 tasks = initTasks({
   hud, R, deptRT, RAIL_SIDE, spawnEmote, chatPush, chatHist, feedPush, zoomToApproval, enterFocus, openAgent, esc,
   brainWrite: (id, title) => brain.write(id, title), brain,
-  onLive: (h) => { document.querySelector('#topbar .brand .ver').textContent = 'BETA'; document.title = `${h.name} — Agents Office`; brain.setOwner(h.name); brain.setQuiet(true); applyRoster(h.agents); },
+  onLive: (h) => { for (const r of Object.values(R)) r.feed.length = 0; for (const id in chatHist) chatHist[id] = chatHist[id].filter(m => m.who !== 'work'); // drop the demo's seeded activity: a connected office starts empty
+    document.querySelector('#topbar .brand .ver').textContent = 'BETA'; document.title = `${h.name} — Agents Office`; brain.setOwner(h.name); brain.setQuiet(true); applyRoster(h.agents); },
   onTools: (agentId, keys) => mcp.onToolsUsed(agentId, keys),
   requestApproval, setStuck: setStuckLive,
   onUsage: (u) => { if (mcp && mcp.setUsage) mcp.setUsage(u); }, // V3.6: the plan's gauge in the top bar

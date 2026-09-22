@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Agents Office — for Claude Code
 
 You are in the Agents Office repo. The owner will most often ask you to change **who the agents are and what they do**, to teach an agent **how a kind of work is done** (a brief or a skill), to put something **on the timetable** (a routine), or to change **which connectors the agents may use**. Do that by editing the JSON files and skill folders described below. Do not touch `src/`, `serve.mjs` or the build for those requests.
@@ -138,3 +142,33 @@ When the owner says "as a team", "get the team on it", "spawn three teammates to
 - `npm run check` is the loop. Run it after any change to code; fix what is red.
 - `README.md` says what the product does. Keep it true to the code.
 - Release: `node scripts/release.mjs --push` (owner only).
+
+## Developing the office itself (code changes)
+
+Everything above is for owner requests that only touch config. This section is for when the request is to change the product's code (`src/`, `*.mjs`, the build). Node ≥ 20, ESM throughout, no framework.
+
+### Commands
+
+- `npm start` — `node serve.mjs`, http://localhost:4520 (`PORT=4600 npm start` for another port).
+- `npm run build` — `node build.mjs`: bakes the Brain graph, then bundles `src/main.js` (+ three.js) with esbuild into one self-contained `dist/command-centre-v2.html` (opens by double-click, demo mode) plus `dist/app.js` / `dist/dev.html` for iteration. The server serves the built HTML, so **a change under `src/` is invisible until you rebuild** (and reload the page).
+- `npm run check` — the only test loop. One sequential script (`check.mjs`): build → roster/skills/routine/team/config unit-style steps → Playwright smoke of the built page (needs `playwright-core` and a local Chrome) → boots the server on a spare port and hits the API. Every step prints ✓/✗; exit 1 on any ✗. There is no per-test filter or runner; to test something new, add a `step(name, fn)` to `check.mjs`.
+- `npm run check:live` (`CHECK_LIVE=1`) — adds a real routed task, chat turn, team task and Chrome read through Claude. It spends plan usage; run it only when asked.
+- `npm run graph` — rebuild `src/braingraph.js` alone.
+
+### Architecture
+
+Two halves that talk over `/api/*`, plus a folder of notes:
+
+- **Browser (`src/`)** — a Three.js isometric scene (`main.js`, `builders.js`, `hero.js`) with panels layered on it: `tasks.js` (task bar, feed, calendar wiring, approvals — polls `/api/tasks`, `/api/routines`, `/api/usage`), `mcp.js`/`connectors.js` (top bar), `brain.js` (graph view), `calendar.js`, `when.js`. `shell.html` is the page skeleton; `build.mjs` splices the bundle into its `<!--APP-->` marker. With no server behind it (file://) the same UI runs a scripted **demo mode** (`v1data.js`, `profile.js` / `window.PROFILE` swap the sample company). Keep both live and demo paths working when changing UI.
+- **Server (`serve.mjs`)** — one plain `http` server, no framework: static page, `/api/{health,agents,skills,lessons,mcp,brain,usage,tasks,routines,chat}`, task state machine (`scheduled → next → doing → waiting → done`, persisted in `data/tasks.json`), the routine/calendar clock, and the run pool. Each concern has its own module: `roster.mjs` (agent roster layering and validation), `skills.mjs`, `learn.mjs` (`revise:` lessons), `onboard.mjs` (lead's set-up interview), `routines.mjs`, `teams.mjs` (lead plans pieces, desks run in parallel, lead writes the final), `mcp.mjs` (connector discovery and the allow/deny/tool lists), `usage.mjs` (plan gauge), `config.mjs`.
+- **How an agent actually runs (`askX` in `serve.mjs`)** — spawns `claude -p … --output-format stream-json` from an empty temp cwd (`CLI_CWD`, so it never inherits this repo's CLAUDE.md), with `Bash/Edit/Write/Read/Glob/Grep/Agent` explicitly **disallowed** and `--allowedTools` set from `mcp.allowedTools()`. The system prompt is assembled from the agent's `does`, `brief`, bound skills, standing lessons and the brain notes. If `ANTHROPIC_API_KEY` is set it uses the SDK instead, which has no tools/MCP. Preserve the disallow list and the "read freely, act only when the task says so" rule when touching this.
+- **Shared modules** — `src/data.js`, `src/models.js` and `src/when.js` are imported by both the browser bundle and the Node server, so they must stay free of DOM access at import time (guard `window`/`document` as `profile.js` does). `src/data.js` holds the fixed 35-seat/6-department layout that `roster.mjs` validates against; the `35` is also asserted in `check.mjs`.
+- **The Brain** — the folder named by `brain` in config (sample vault in `./brain`). `graph-build.mjs` reads its `[[wiki links]]` into a force layout; the server rebuilds it live as agents write notes to `<brain>/Agents Office/`. The office's own output folder is skipped when graphing.
+- **Runtime state** — `data/` (tasks, routines state, usage) is gitignored and separate from the owner's files in the brain. Routine *definitions* live in the brain (`routines.json`), their run state in `data/routines.json`.
+
+### Gotchas
+
+- `src/braingraph.js` is **generated** on every build/check from whatever brain is configured; never hand-edit it. It will show as modified in `git status` after a build, and if `office.config.local.json` points at a private vault it will contain that vault's note names. `scripts/release.mjs` regenerates it from the sample `./brain` for public releases.
+- `dist/command-centre-v2.html` is the one tracked build artifact (the rest of `dist/` is ignored); rebuild it before committing UI changes.
+- **Adding a root-level `.mjs` that `serve.mjs` imports?** Add it to the `FILES` whitelist in `scripts/release.mjs` too, or the release will not start (this shipped broken once, 3.2.0-beta.2; the script now refuses such a build).
+- Version notes live in `CHANGELOG.md` and `package.json` `version`; the code comments tag features by version (`V3.2 (16 Sep)`), so follow that when adding a new one.

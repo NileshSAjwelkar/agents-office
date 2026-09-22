@@ -460,7 +460,7 @@ export function initMcp({ scene, hud, LAYOUT, DEPTS, FR, R, connectors = null })
       m.dot.setAttribute('opacity', (f ? 0.85 : 0.45) * wireA);
     }
     if (now > nextModelPulse) {
-      modelPulse(Math.random() < 0.6 ? 'claude' : 'chatgpt');
+      if (!LIVE) modelPulse(Math.random() < 0.6 ? 'claude' : 'chatgpt'); // demo theatre: a connected office pulses on real tool use only
       nextModelPulse = now + 2400 + Math.random() * 3200;
     }
     for (let i = wirePulses.length - 1; i >= 0; i--) {
@@ -723,7 +723,7 @@ export function initMcp({ scene, hud, LAYOUT, DEPTS, FR, R, connectors = null })
 
       // steady exchange: a random connector and a random desk trade packets both ways —
       // the constant "connectors helping the agents" energy AJ asked for
-      if (now > dk.nextAmbient && dk.seats.length) {
+      if (!LIVE && now > dk.nextAmbient && dk.seats.length) {
         const item = byDept[dept][Math.floor(Math.random() * n)];
         const seat = dk.seats[Math.floor(Math.random() * dk.seats.length)];
         const outFirst = Math.random() < 0.5;
