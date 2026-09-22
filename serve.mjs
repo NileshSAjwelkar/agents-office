@@ -454,7 +454,22 @@ await rebuildGraph();
 const discovering = mcp.discover().then(l => { console.log(`  connectors: ${l.filter(s => s.status === 'connected').length} connected of ${l.length} (claude mcp list)`); return l; });
 const agentsOut = () => { const setup = setupMap(); return AGENTS.map(a => ({ id: a.id, name: a.name, role: a.role, does: a.does, tools: a.tools, brief: a.brief || '', model: a.model || '', effort: a.effort || '', skills: skills.names(a), lessons: learn.count(BRAIN, a.id), department: a.department, lead: a.lead,
   interviewer: leadOf(a.department).id === a.id, setUp: setup[a.department] })); };
+// The office holds your connectors, so it answers this machine only: it listens on 127.0.0.1 and refuses what a web page could forge —
+// a foreign Host (DNS rebinding), a foreign Origin (a page in your browser posting to localhost), a body that is not JSON (the "simple
+// request" that skips the browser's preflight).
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+function forged(req) { // → [status, reason] or null
+  try { if (!LOCAL_HOSTS.has(new URL('http://' + (req.headers.host || '?')).hostname)) return [403, 'this office answers localhost only']; } catch { return [403, 'bad Host header']; }
+  if (req.headers.origin !== undefined) {
+    let o = null; try { o = new URL(req.headers.origin); } catch {}
+    if (!o || o.protocol !== 'http:' || !LOCAL_HOSTS.has(o.hostname) || o.port !== String(cfg.port)) return [403, 'cross-origin requests are refused'];
+  }
+  const hasBody = +req.headers['content-length'] > 0 || !!req.headers['transfer-encoding'];
+  if (req.method !== 'GET' && req.method !== 'HEAD' && hasBody && !/^application\/json\b/i.test(req.headers['content-type'] || '')) return [415, 'send JSON (content-type: application/json)'];
+  return null;
+}
 const server = http.createServer(async (req, res) => {
+  const bad = forged(req); if (bad) return json(res, bad[0], { error: bad[1] });
   const url = new URL(req.url, 'http://x');
   try {
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/command-centre-v2.html' || url.pathname === '/dark')) {
@@ -568,7 +583,7 @@ const server = http.createServer(async (req, res) => {
     json(res, 404, { error: 'not found' });
   } catch (e) { console.error(e); json(res, 500, { error: e.message }); }
 });
-server.listen(cfg.port, () => {
+server.listen(cfg.port, '127.0.0.1', () => {
   console.log(`Agents Office ${version} → http://localhost:${cfg.port}`);
   console.log(`  business: ${cfg.name}   brain: ${BRAIN} (${graph.notes} notes, ${graph.links.length} links)   claude: ${backend} · ${modelName(cfg.model)}${cfg.effort ? ' · effort ' + cfg.effort : ''} by default (routing on Sonnet)`);
   getUsage(true).then(u => console.log(u.source === 'claude' ? `  usage: session ${u.session?.percent ?? '—'}% · week ${u.week?.percent ?? '—'}% (your Claude plan, as Claude Code shows it)` : `  usage: Claude's gauge unavailable (${u.reason}) — showing the office's own count`)).catch(() => {});
